@@ -1,0 +1,221 @@
+1. Create a field on Account named "Number of Contacts". Populate this field with the number of contacts related to an account.
+
+A. trigger ContactCount on Contact (after insert, after update, after delete, after undelete) {
+
+    Map < Id, List< Contact > > mapAcctIdContactList = new Map < Id, List < Contact > >();
+    Map < Id, List< Contact > > mapAcctIdDelContactList = new Map < Id, List < Contact > >();
+    Set < Id > AcctIds = new Set < Id >();    
+    
+    if ( trigger.isInsert ) {
+        for(Contact Con : trigger.New) {
+            if ( String.isNotBlank( Con.AccountId ) ) {
+                if ( !mapAcctIdContactList.containsKey( Con.AccountId ) ) {
+                    mapAcctIdContactList.put( Con.AccountId, new List < Contact >());
+                }
+                mapAcctIdContactList.get( Con.AccountId ).add( Con );
+                AcctIds.add( Con.AccountId );
+            }   
+        }  
+    }
+	
+    if ( trigger.isUpdate ) {
+        for ( Contact Con : trigger.New ) {
+            Id oldAcctId = trigger.oldMap.get( Con.Id ).AccountId;
+            if ( String.isNotBlank ( Con.AccountId ) && Con.AccountId != oldAcctId ) {
+                if ( !mapAcctIdContactList.containsKey ( Con.AccountId ) ) {
+                    mapAcctIdContactList.put ( Con.AccountId, new List < Contact >() );
+                }
+                mapAcctIdContactList.get( Con.AccountId ).add ( Con );
+                AcctIds.add ( Con.AccountId );
+                if ( !mapAcctIdDelContactList.containsKey ( oldAcctId ) ){
+                    mapAcctIdDelContactList.put ( oldAcctId, new List < Contact >() );
+                }
+                mapAcctIdDelContactList.get( oldAcctId ).add( Con );
+                AcctIds.add ( oldAcctId );
+            } else if ( String.isBlank ( Con.AccountId ) && String.isNotBlank( oldAcctId ) ) {
+                if ( !mapAcctIdDelContactList.containsKey ( oldAcctId ) ){
+                    mapAcctIdDelContactList.put ( oldAcctId, new List < Contact >() );
+                }
+                mapAcctIdDelContactList.get( oldAcctId ).add( Con );   
+                AcctIds.add( oldAcctId );
+            }
+        }  
+    }
+    
+    if ( trigger.isUndelete) {
+        for ( Contact Con : trigger.new ) {
+            if ( String.isNotBlank( Con.AccountId ) ) {
+                if ( !mapAcctIdContactList.containsKey( Con.AccountId ) ) {
+                    mapAcctIdContactList.put( Con.AccountId, new List < Contact >() );
+                }
+                mapAcctIdContactList.get( Con.AccountId ).add( Con );     
+                AcctIds.add( Con.AccountId );
+            } 
+        }  
+    }      
+
+    if ( trigger.isDelete) {
+        for( Contact Con : trigger.Old ) {
+            if ( String.isNotBlank( Con.AccountId ) ) {
+                if ( !mapAcctIdDelContactList.containsKey( Con.AccountId ) ) {
+                    mapAcctIdDelContactList.put( Con.AccountId, new List < Contact >() );
+                }
+                mapAcctIdDelContactList.get( Con.AccountId ).add( Con);    
+                AcctIds.add( Con.AccountId );
+            }
+        }
+    }   
+    
+    if ( AcctIds.size() > 0 ) {
+	
+        List < Account > listAcct = new List < Account >();    
+        listAcct = [ SELECT Id, Number_of_Contacts__c FROM Account WHERE Id IN : AcctIds ];
+        
+        for ( Account acct : listAcct ) {
+            Integer noOfConts = 0;
+            if ( mapAcctIdContactList.containsKey( acct.Id )  ) {
+                noOfConts += mapAcctIdContactList.get( acct.Id ).size();
+            }
+            if ( mapAcctIdDelContactList.containsKey( acct.Id ) ) {
+                noOfConts -= mapAcctIdDelContactList.get( acct.Id ).size();
+            }
+            acct.Number_of_Contacts__c = acct.Number_of_Contacts__c == null ? noOfConts : ( acct.Number_of_Contacts__c + noOfConts );
+        }
+        update listAcct; 
+    } 
+}
+
+//*******************************************************************************************************************************************
+
+ 2. Build a basic lightning component that can query a list of 10 most recently created accounts and display it using a lightning app.
+ 
+ A. 
+ 
+Apex Class:
+-----------
+
+public class AccountController {
+@AuraEnabled(cacheable=true)
+public static List<Account> getRecentAccounts() {
+return [SELECT  Id,Name,Phone,CreatedDate FROM Account ORDER BY CreatedDate DESC LIMIT 10];
+}
+}
+
+
+
+Lightning Aura Component:
+------------------------
+
+HTML
+-------
+<aura:component controller = "AccountController" implements="flexipage:availableForAllPageTypes,flexipage:availableForRecordHome,force:hasRecordId" access="global" >
+<aura:attribute name="data" type="Object"/>
+<aura:attribute name="columns" type="List"/>
+<aura:handler name="init" value="{! this }" action="{! c.init }"/>
+<div style="height: 300px">
+<lightning:datatable
+keyField="id"
+data="{! v.data }"
+columns="{! v.columns }"
+hideCheckboxColumn="true"/>
+</div>
+</aura:component>
+
+
+JS:
+-------
+
+({
+init : function(component, event, helper) {
+
+const columns=[{label: 'Account name', fieldName: 'Name', type: 'text'},
+{label: 'Created Date', fieldName: 'CreatedDate', type: 'date'}]
+component.set('v.columns',columns);
+
+var accList = component.get("c.getRecentAccounts");
+accList.setParams({});
+
+accList.setCallback(this, function(data) 
+	   {
+		   component.set("v.data", data.getReturnValue());
+	   });
+$A.enqueueAction(accList);
+}
+
+})
+
+
+
+Lightning Web Component:
+-------------------------
+
+Html
+----
+<template>
+<div style="height: 300px;">
+<lightning-datatable
+key-field="id"
+data={data}
+columns={columns}
+hide-checkbox-column>
+</lightning-datatable>
+</div>
+</template>
+
+
+JS:
+---
+
+import { LightningElement,wire } from 'lwc';
+import getRecentAccounts from '@salesforce/apex/AccountController.getRecentAccounts'
+export default class GetRecentAccounts extends LightningElement {
+columns = [
+{ label: 'Name', fieldName: 'Name' },
+{ label: 'CreatedDate', fieldName: 'CreatedDate', type: 'date' }
+];
+data
+@wire(getRecentAccounts)
+getAccounts({data,error})
+{
+if(data)
+{
+this.data=data
+}
+if(error)
+{
+console.error(error)
+}
+}
+}
+
+
+
+Lightning App:
+--------------
+
+<aura:application extends="force:slds">
+<!--Lightning Web Component-->
+<c:getRecentAccounts></c:getRecentAccounts>	
+<!--Lightning Aura Component-->
+<c:getRecentAccountsUsingLightningComponent></c:getRecentAccountsUsingLightningComponent>
+</aura:application>
+
+
+//****************************************************************************************************************
+
+ 3. Make a basic http callout and print the result using system.debug
+https://postman-echo.com/get?foo1=bar1&foo2=bar2
+
+A. Apex Class:
+public class REST_Callout_Example {
+    public static void doCallout() {
+        HttpRequest req = new HttpRequest();
+        req.setEndpoint('https://postman-echo.com/get?foo1=bar1&foo2=bar2');
+        req.setMethod('GET');
+        req.setTimeout(120000);
+        Http http = new Http();
+        HTTPResponse res = http.send(req);
+        system.debug('Response: ' + res);
+        system.debug('Response body: ' + res.getBody());
+    }
+}
